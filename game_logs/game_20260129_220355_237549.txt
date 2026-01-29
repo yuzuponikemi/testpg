@@ -1,0 +1,13 @@
+# Variant Go: StandardGomokuRule 15x15
+# Black: Black (Minimax (depth=3)) vs White: White (MCTS (sims=200))
+# Result: BLACK_WIN (9 moves)
+
+1. h8
+2. l14
+3. g7
+4. c12
+5. f6
+6. c14
+7. e5
+8. d4
+9. i9

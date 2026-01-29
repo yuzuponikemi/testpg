@@ -1,0 +1,2 @@
+# This file ensures the game_logs directory is tracked by git
+# Game records (*.json, *.jsonl) are stored here

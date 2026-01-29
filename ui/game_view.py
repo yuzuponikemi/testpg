@@ -12,10 +12,12 @@ from game_core import (
     GameEngine, RuleRegistry, Stone, GameStatus, GameEvent, Position
 )
 from players import Player, HumanPlayer, AIPlayer, GameSession, GameSessionConfig
-from ai_strategies import AIStrategyFactory
+from ai_strategies import AIStrategyFactory, ThinkingProgress
+from game_record import GameRecorder
 
 from ui.settings_view import GameConfig
 from ui.board_component import BoardComponent
+from ui.thinking_panel import ThinkingPanel
 
 
 class GameView(ft.View):
@@ -48,6 +50,16 @@ class GameView(ft.View):
         self._game_task: Optional[asyncio.Task] = None
         self._waiting_for_human = False
 
+        # 棋譜記録
+        record_enabled = getattr(config, 'record_games', False)
+        record_dir = getattr(config, 'record_dir', './game_logs')
+        record_format = getattr(config, 'record_format', 'json')
+        self._recorder = GameRecorder(
+            output_dir=record_dir,
+            format=record_format,
+            enabled=record_enabled,
+        )
+
         # 初期セッションを作成
         self._create_session()
 
@@ -56,19 +68,35 @@ class GameView(ft.View):
         self._status_text: ft.Text = None  # type: ignore
         self._turn_text: ft.Text = None  # type: ignore
         self._result_container: ft.Container = None  # type: ignore
+        self._thinking_panel: ThinkingPanel = None  # type: ignore
 
         self._build_ui()
+
+        # AIに進捗コールバックを設定
+        self._setup_ai_callbacks()
 
     def _create_player(self, player_type: str, name: str) -> Player:
         """プレイヤーを作成"""
         if player_type == "human":
             return HumanPlayer(name)
         else:
-            strategy = AIStrategyFactory.create(
-                player_type,
-                depth=self._config.ai_depth,
-                simulations=self._config.ai_simulations,
-            )
+            # VCF AIの場合
+            if player_type == "vcf":
+                from threat_search import VCFBasedAI
+                from ai_strategies import RandomAI
+                strategy = VCFBasedAI(
+                    use_vct=getattr(self._config, 'use_vct', False),
+                    fallback=RandomAI(),
+                )
+            else:
+                strategy = AIStrategyFactory.create(
+                    player_type,
+                    depth=self._config.ai_depth,
+                    simulations=self._config.ai_simulations,
+                    use_iterative_deepening=getattr(
+                        self._config, 'use_iterative_deepening', False
+                    ),
+                )
             return AIPlayer(strategy, f"{name} ({strategy.name})")
 
     def _create_session(self) -> None:
@@ -81,6 +109,14 @@ class GameView(ft.View):
             black_player=self._black_player,
             white_player=self._white_player,
             config=session_config,
+        )
+
+        # 棋譜記録を開始
+        self._recorder.start_game(
+            self._rule,
+            self._black_player,
+            self._white_player,
+            self._config,
         )
 
     def _build_ui(self) -> None:
@@ -146,6 +182,12 @@ class GameView(ft.View):
             visible=False,
         )
 
+        # 思考パネル（初期は非表示）
+        show_thinking = getattr(self._config, 'show_thinking', True)
+        self._thinking_panel = ThinkingPanel(show_detailed_log=show_thinking)
+        self._thinking_panel.set_page(self._page)
+        self._thinking_panel.visible = False
+
         # 操作ボタン
         new_game_button = ft.ElevatedButton(
             content=ft.Row(
@@ -185,7 +227,9 @@ class GameView(ft.View):
                     ft.Divider(),
                     ft.Container(height=10),
                     self._board_component,
-                    ft.Container(height=20),
+                    ft.Container(height=10),
+                    self._thinking_panel,
+                    ft.Container(height=10),
                     status_container,
                     self._result_container,
                     ft.Container(height=20),
@@ -203,6 +247,22 @@ class GameView(ft.View):
         # イベントリスナー登録
         self._session.engine.add_listener(self._on_game_event)
         self._session.add_listener(self._on_session_event)
+
+    def _setup_ai_callbacks(self) -> None:
+        """AIプレイヤーに進捗コールバックを設定"""
+        for player in [self._black_player, self._white_player]:
+            if isinstance(player, AIPlayer):
+                if player.strategy.supports_progress:
+                    player.strategy.set_progress_callback(self._on_thinking_progress)
+
+    def _on_thinking_progress(self, progress: ThinkingProgress) -> None:
+        """AI思考進捗のコールバック（別スレッドから呼ばれる）"""
+        # スレッドセーフに更新
+        if self._thinking_panel and self._page:
+            try:
+                self._thinking_panel.update_progress(progress)
+            except RuntimeError:
+                pass  # セッション破棄済み
 
     def start_game(self) -> None:
         """ゲームを開始（外部から呼び出し用）"""
@@ -255,12 +315,14 @@ class GameView(ft.View):
     def _on_game_event(self, event: GameEvent) -> None:
         """ゲームエンジンイベントハンドラ（盤面更新用）"""
         # 盤面の更新はBoardComponentが行う
-        # ここではGAME_RESETのみ処理
         if event.event_type == "GAME_RESET":
             self._result_container.visible = False
             self._update_turn_display()
-            if self._page:
-                self._page.update()
+            self._safe_update()
+        elif event.event_type == "MOVE_PLAYED":
+            # 棋譜に記録
+            if event.position and event.stone:
+                self._recorder.record_move(event.position, event.stone)
 
     def _on_session_event(self, event) -> None:
         """セッションイベントハンドラ（ターン表示用）"""
@@ -271,12 +333,12 @@ class GameView(ft.View):
             # ゲーム終了は_run_game_loopで処理
             pass
 
-        if self._page:
-            self._page.update()
+        self._safe_update()
 
     def _update_turn_display(self) -> None:
         """手番表示を更新"""
         if self._session.engine.is_game_over:
+            # ゲーム終了時もパネルは表示したまま（最終結果を見られる）
             return
 
         current = self._session.engine.current_turn
@@ -292,14 +354,25 @@ class GameView(ft.View):
         # 人間の番なら入力待ち、AIの番なら計算中を表示
         if isinstance(player, HumanPlayer):
             self._status_text.value = "Your turn - Click on the board"
+            # 思考パネルは表示したまま（前のAI思考結果を見られる）
         else:
             self._status_text.value = "AI is thinking..."
+            # 思考パネルを表示してクリア（新しいAIの番の開始時のみ）
+            show_thinking = getattr(self._config, 'show_thinking', True)
+            self._thinking_panel.visible = show_thinking
+            if show_thinking:
+                self._thinking_panel.clear()
 
-        if self._page:
-            self._page.update()
+        self._safe_update()
 
     def _show_result(self, result: GameStatus) -> None:
         """結果を表示"""
+        # 棋譜を保存
+        self._recorder.end_game(result)
+        saved_path = self._recorder.save()
+        if saved_path:
+            print(f"Game record saved: {saved_path}")
+
         if result == GameStatus.BLACK_WIN:
             message = "Black Wins!"
             color = ft.Colors.BLACK
@@ -328,8 +401,15 @@ class GameView(ft.View):
         )
         self._result_container.visible = True
 
+        self._safe_update()
+
+    def _safe_update(self) -> None:
+        """ページを安全に更新（セッション破棄済みの場合は無視）"""
         if self._page:
-            self._page.update()
+            try:
+                self._page.update()
+            except RuntimeError:
+                pass  # セッション破棄済み
 
     def _on_new_game_click(self, e: ft.ControlEvent) -> None:
         """新規ゲームボタンクリックハンドラ"""
@@ -347,6 +427,9 @@ class GameView(ft.View):
             self._config.white_player_type, "White"
         )
 
+        # AIコールバックを設定
+        self._setup_ai_callbacks()
+
         # 新しいセッションを作成
         self._create_session()
 
@@ -359,6 +442,8 @@ class GameView(ft.View):
 
         # 表示をリセット
         self._result_container.visible = False
+        self._thinking_panel.visible = False
+        self._thinking_panel.clear()
 
         # 新しいゲームを開始
         self._start_game()

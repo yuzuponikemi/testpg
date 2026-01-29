@@ -15,13 +15,50 @@ AI戦略の実装を提供します。
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Optional, Callable, List, Tuple
 import random
 import math
 import time
 
 from game_core import Board, GameRule, Position, Stone, GameStatus
+
+
+# ----------------------
+# 思考進捗通知（Phase 1）
+# ----------------------
+
+@dataclass
+class ThinkingProgress:
+    """
+    AI思考進捗を表すデータクラス
+
+    各AIタイプで使用するフィールドが異なります。
+    UIでの表示や進捗バーの更新に使用します。
+    """
+    ai_type: str              # "minimax", "mcts", "vcf"
+    elapsed_time: float       # 経過時間（秒）
+
+    # Minimax用
+    current_depth: int = 0        # 現在の探索深度
+    max_depth: int = 0            # 最大深度
+    nodes_visited: int = 0        # 訪問ノード数
+    current_best_move: Optional[Position] = None  # 現時点の最善手
+    current_best_score: float = 0.0    # 評価値
+
+    # MCTS用
+    simulations_completed: int = 0   # 完了シミュレーション数
+    total_simulations: int = 0       # 目標シミュレーション数
+    top_moves: List[Tuple[Position, float]] = field(default_factory=list)  # 上位手と勝率
+
+    # VCF用
+    vcf_depth: int = 0               # 探索深度
+    is_forced_win: bool = False      # 詰みが見つかったか
+    win_sequence: List[Position] = field(default_factory=list)  # 詰み手順
+
+
+# 進捗コールバック型
+ThinkingProgressCallback = Callable[[ThinkingProgress], None]
 
 
 class AIStrategy(ABC):
@@ -36,6 +73,9 @@ class AIStrategy(ABC):
     - 開放型のAI（外部エンジン連携）
     """
 
+    def __init__(self):
+        self._progress_callback: Optional[ThinkingProgressCallback] = None
+
     @property
     @abstractmethod
     def name(self) -> str:
@@ -47,6 +87,28 @@ class AIStrategy(ABC):
     def difficulty(self) -> str:
         """難易度表示（Easy/Medium/Hard）"""
         pass
+
+    @property
+    def supports_progress(self) -> bool:
+        """進捗通知をサポートするかどうか"""
+        return False
+
+    def set_progress_callback(self, callback: Optional[ThinkingProgressCallback]) -> None:
+        """
+        進捗コールバックを設定
+
+        Args:
+            callback: 進捗通知時に呼ばれるコールバック関数（Noneで解除）
+        """
+        self._progress_callback = callback
+
+    def _report_progress(self, progress: ThinkingProgress) -> None:
+        """進捗をコールバックに通知（内部用）"""
+        if self._progress_callback:
+            try:
+                self._progress_callback(progress)
+            except Exception:
+                pass  # コールバックのエラーは無視
 
     @abstractmethod
     def select_move(self, board: Board, rule: GameRule, stone: Stone) -> Position:
@@ -80,6 +142,7 @@ class RandomAI(AIStrategy):
         Args:
             seed: 乱数シード（テスト用、省略時はランダム）
         """
+        super().__init__()
         self._rng = random.Random(seed)
 
     @property
@@ -132,23 +195,29 @@ class MinimaxAI(AIStrategy):
         self,
         depth: int = 3,
         weights: Optional[EvaluationWeights] = None,
-        time_limit: Optional[float] = None
+        time_limit: Optional[float] = None,
+        use_iterative_deepening: bool = False
     ):
         """
         Args:
             depth: 探索深度（3-5が推奨、深いほど強いが遅い）
             weights: 評価関数の重み設定
             time_limit: 時間制限（秒）、省略時は制限なし
+            use_iterative_deepening: 反復深化を使用するか
         """
+        super().__init__()
         self._depth = depth
         self._weights = weights or EvaluationWeights()
         self._time_limit = time_limit
+        self._use_iterative_deepening = use_iterative_deepening
         self._start_time: float = 0
         self._root_stone: Stone = Stone.EMPTY
+        self._nodes_visited: int = 0
 
     @property
     def name(self) -> str:
-        return f"Minimax (depth={self._depth})"
+        suffix = " ID" if self._use_iterative_deepening else ""
+        return f"Minimax (depth={self._depth}){suffix}"
 
     @property
     def difficulty(self) -> str:
@@ -158,6 +227,10 @@ class MinimaxAI(AIStrategy):
             return "Medium"
         else:
             return "Hard"
+
+    @property
+    def supports_progress(self) -> bool:
+        return True
 
     def select_move(self, board: Board, rule: GameRule, stone: Stone) -> Position:
         """Minimax探索で最善手を選択"""
@@ -174,7 +247,117 @@ class MinimaxAI(AIStrategy):
 
         self._start_time = time.time()
         self._root_stone = stone
+        self._nodes_visited = 0
 
+        if self._use_iterative_deepening:
+            return self._iterative_deepening_search(board, rule, stone, valid_moves)
+        else:
+            return self._fixed_depth_search(board, rule, stone, valid_moves, self._depth)
+
+    def _iterative_deepening_search(
+        self,
+        board: Board,
+        rule: GameRule,
+        stone: Stone,
+        valid_moves: List[Position]
+    ) -> Position:
+        """
+        反復深化探索
+
+        深さ1から順に探索し、各深度で最善手を更新します。
+        時間切れの場合は、最後に完了した深度の最善手を返します。
+        """
+        best_move = valid_moves[0]
+        best_score = float('-inf')
+
+        # 候補手を評価順でソート（枝刈り効率化）
+        sorted_moves = self._sort_moves(board, rule, stone, valid_moves)
+
+        for depth in range(1, self._depth + 1):
+            if self._is_timeout():
+                break
+
+            depth_start_nodes = self._nodes_visited
+            move, score = self._search_at_depth(board, rule, stone, sorted_moves, depth)
+
+            # 時間切れでなければ結果を採用
+            if not self._is_timeout():
+                best_move = move
+                best_score = score
+
+                # 進捗通知
+                self._report_progress(ThinkingProgress(
+                    ai_type="minimax",
+                    elapsed_time=time.time() - self._start_time,
+                    current_depth=depth,
+                    max_depth=self._depth,
+                    nodes_visited=self._nodes_visited,
+                    current_best_move=best_move,
+                    current_best_score=best_score,
+                ))
+
+                # 必勝が見つかった場合は即座に返す
+                if score >= self._weights.five:
+                    break
+
+        return best_move
+
+    def _search_at_depth(
+        self,
+        board: Board,
+        rule: GameRule,
+        stone: Stone,
+        sorted_moves: List[Position],
+        depth: int
+    ) -> Tuple[Position, float]:
+        """指定深度で探索"""
+        best_move = sorted_moves[0]
+        best_score = float('-inf')
+        alpha = float('-inf')
+        beta = float('inf')
+
+        for move in sorted_moves:
+            if self._is_timeout():
+                break
+
+            self._nodes_visited += 1
+
+            # 仮に手を打つ
+            new_board = board.copy()
+            new_board.set_stone(move.x, move.y, stone)
+
+            # 勝敗判定
+            status = rule.check_winner(new_board, move.x, move.y, stone)
+            if status != GameStatus.ONGOING:
+                # 即勝ちの手
+                if (status == GameStatus.BLACK_WIN and stone == Stone.BLACK) or \
+                   (status == GameStatus.WHITE_WIN and stone == Stone.WHITE):
+                    return move, self._weights.five * (depth + 1)
+
+            # 相手の応手を探索
+            score = self._minimax(
+                new_board, rule, stone.opponent(),
+                depth - 1, alpha, beta, False,
+                move
+            )
+
+            if score > best_score:
+                best_score = score
+                best_move = move
+
+            alpha = max(alpha, score)
+
+        return best_move, best_score
+
+    def _fixed_depth_search(
+        self,
+        board: Board,
+        rule: GameRule,
+        stone: Stone,
+        valid_moves: List[Position],
+        depth: int
+    ) -> Position:
+        """固定深度探索（従来の動作）"""
         best_move = valid_moves[0]
         best_score = float('-inf')
         alpha = float('-inf')
@@ -186,6 +369,8 @@ class MinimaxAI(AIStrategy):
         for move in sorted_moves:
             if self._is_timeout():
                 break
+
+            self._nodes_visited += 1
 
             # 仮に手を打つ
             new_board = board.copy()
@@ -202,7 +387,7 @@ class MinimaxAI(AIStrategy):
             # 相手の応手を探索
             score = self._minimax(
                 new_board, rule, stone.opponent(),
-                self._depth - 1, alpha, beta, False,
+                depth - 1, alpha, beta, False,
                 move
             )
 
@@ -211,6 +396,18 @@ class MinimaxAI(AIStrategy):
                 best_move = move
 
             alpha = max(alpha, score)
+
+            # 進捗通知（定期的に）
+            if self._nodes_visited % 100 == 0:
+                self._report_progress(ThinkingProgress(
+                    ai_type="minimax",
+                    elapsed_time=time.time() - self._start_time,
+                    current_depth=depth,
+                    max_depth=depth,
+                    nodes_visited=self._nodes_visited,
+                    current_best_move=best_move,
+                    current_best_score=best_score,
+                ))
 
         return best_move
 
@@ -241,6 +438,8 @@ class MinimaxAI(AIStrategy):
         Returns:
             評価スコア
         """
+        self._nodes_visited += 1
+
         # 時間制限チェック
         if self._is_timeout():
             return 0
@@ -529,6 +728,9 @@ class MCTSAI(AIStrategy):
     - time_limit=5.0: 5秒まで探索
     """
 
+    # 進捗通知間隔（シミュレーション数）
+    PROGRESS_INTERVAL = 50
+
     def __init__(
         self,
         simulations: int = 1000,
@@ -541,6 +743,7 @@ class MCTSAI(AIStrategy):
             time_limit: 時間制限（秒）、設定時はsimulationsより優先
             exploration: UCB1の探索係数
         """
+        super().__init__()
         self._simulations = simulations
         self._time_limit = time_limit
         self._exploration = exploration
@@ -555,6 +758,10 @@ class MCTSAI(AIStrategy):
     @property
     def difficulty(self) -> str:
         return "Hard"
+
+    @property
+    def supports_progress(self) -> bool:
+        return True
 
     def select_move(self, board: Board, rule: GameRule, stone: Stone) -> Position:
         """MCTS探索で最善手を選択"""
@@ -572,12 +779,37 @@ class MCTSAI(AIStrategy):
             if center in valid_moves:
                 return center
 
+        # 候補手を絞り込む（既存の石の周囲のみ）
+        candidate_moves = self._get_candidate_moves(board, valid_moves)
+
+        # 即座の勝ち手をチェック
+        winning_move = self._find_winning_move(board, rule, stone, candidate_moves)
+        if winning_move:
+            return winning_move
+
+        # 相手の即座の勝ち手をブロック
+        opponent = stone.opponent()
+        opponent_winning = self._find_winning_move(board, rule, opponent, candidate_moves)
+        if opponent_winning:
+            return opponent_winning
+
+        # 4連を作る手（次に勝てる）
+        threat_move = self._find_threat_move(board, rule, stone, candidate_moves)
+        if threat_move:
+            return threat_move
+
+        # 相手の4連をブロック
+        opponent_threat = self._find_threat_move(board, rule, opponent, candidate_moves)
+        if opponent_threat:
+            return opponent_threat
+
         # ルートノード作成
         root = MCTSNode(board.copy(), stone)
-        root.untried_moves = list(valid_moves)
+        root.untried_moves = list(candidate_moves)
 
         start_time = time.time()
         simulations = 0
+        total_simulations = self._simulations
 
         while True:
             # 終了条件チェック
@@ -599,14 +831,144 @@ class MCTSAI(AIStrategy):
 
             simulations += 1
 
+            # 進捗通知
+            if simulations % self.PROGRESS_INTERVAL == 0:
+                top_moves = self._get_top_moves(root, 5)
+                self._report_progress(ThinkingProgress(
+                    ai_type="mcts",
+                    elapsed_time=time.time() - start_time,
+                    simulations_completed=simulations,
+                    total_simulations=total_simulations,
+                    top_moves=top_moves,
+                ))
+
         # 子がない場合（全て未試行のまま終了した場合）
         if not root.children:
             return self._rng.choice(valid_moves)
+
+        # 最終進捗通知
+        top_moves = self._get_top_moves(root, 5)
+        self._report_progress(ThinkingProgress(
+            ai_type="mcts",
+            elapsed_time=time.time() - start_time,
+            simulations_completed=simulations,
+            total_simulations=total_simulations,
+            top_moves=top_moves,
+        ))
 
         # 最多訪問ノードを選択
         best_child = max(root.children, key=lambda c: c.visits)
 
         return best_child.move  # type: ignore
+
+    def _get_candidate_moves(
+        self,
+        board: Board,
+        valid_moves: List[Position],
+        radius: int = 2
+    ) -> List[Position]:
+        """既存の石の周囲のみを候補とする"""
+        if board.move_count == 0:
+            return valid_moves
+
+        candidates = set()
+
+        for y in range(board.height):
+            for x in range(board.width):
+                if board.get_stone(x, y) != Stone.EMPTY:
+                    # 周囲をチェック
+                    for dy in range(-radius, radius + 1):
+                        for dx in range(-radius, radius + 1):
+                            nx, ny = x + dx, y + dy
+                            if board.is_within_bounds(nx, ny) and board.is_empty(nx, ny):
+                                candidates.add(Position(nx, ny))
+
+        # 合法手との交差
+        result = [m for m in valid_moves if m in candidates]
+        return result if result else valid_moves
+
+    def _find_winning_move(
+        self,
+        board: Board,
+        rule: GameRule,
+        stone: Stone,
+        valid_moves: List[Position]
+    ) -> Optional[Position]:
+        """即座に勝てる手を探す"""
+        for move in valid_moves:
+            test_board = board.copy()
+            test_board.set_stone(move.x, move.y, stone)
+            status = rule.check_winner(test_board, move.x, move.y, stone)
+            if (status == GameStatus.BLACK_WIN and stone == Stone.BLACK) or \
+               (status == GameStatus.WHITE_WIN and stone == Stone.WHITE):
+                return move
+        return None
+
+    def _find_threat_move(
+        self,
+        board: Board,
+        rule: GameRule,
+        stone: Stone,
+        valid_moves: List[Position]
+    ) -> Optional[Position]:
+        """4連を作る手を探す（次のターンで勝てる脅威）"""
+        win_condition = getattr(rule, 'win_condition', 5)
+        target_count = win_condition - 1  # 4
+
+        directions = [(1, 0), (0, 1), (1, 1), (1, -1)]
+
+        for move in valid_moves:
+            for dx, dy in directions:
+                count = 1  # この手自身
+
+                # 正方向
+                for i in range(1, win_condition):
+                    nx, ny = move.x + dx * i, move.y + dy * i
+                    if not board.is_within_bounds(nx, ny):
+                        break
+                    if board.get_stone(nx, ny) == stone:
+                        count += 1
+                    else:
+                        break
+
+                # 負方向
+                for i in range(1, win_condition):
+                    nx, ny = move.x - dx * i, move.y - dy * i
+                    if not board.is_within_bounds(nx, ny):
+                        break
+                    if board.get_stone(nx, ny) == stone:
+                        count += 1
+                    else:
+                        break
+
+                if count >= target_count:
+                    return move
+
+        return None
+
+    def _get_top_moves(
+        self,
+        root: MCTSNode,
+        count: int
+    ) -> List[Tuple[Position, float]]:
+        """上位の手と勝率を取得"""
+        if not root.children:
+            return []
+
+        # 訪問回数でソート
+        sorted_children = sorted(
+            root.children,
+            key=lambda c: c.visits,
+            reverse=True
+        )
+
+        top_moves = []
+        for child in sorted_children[:count]:
+            if child.visits > 0 and child.move:
+                win_rate = child.wins / child.visits
+                top_moves.append((child.move, win_rate))
+
+        return top_moves
 
     def _select(self, node: MCTSNode, rule: GameRule) -> MCTSNode:
         """Selection + Expansion"""
@@ -646,15 +1008,16 @@ class MCTSAI(AIStrategy):
             parent=node
         )
 
-        # 子ノードの未試行手を設定
-        child.untried_moves = rule.get_valid_moves(new_board, child.stone)
+        # 子ノードの未試行手を設定（候補を絞り込む）
+        valid_moves = rule.get_valid_moves(new_board, child.stone)
+        child.untried_moves = self._get_candidate_moves(new_board, valid_moves)
 
         node.children.append(child)
 
         return child
 
     def _simulate(self, node: MCTSNode, rule: GameRule) -> GameStatus:
-        """ランダムプレイアウト"""
+        """ランダムプレイアウト（最適化版）"""
         board = node.board.copy()
         stone = node.stone
         last_move = node.move
@@ -667,16 +1030,30 @@ class MCTSAI(AIStrategy):
             if status != GameStatus.ONGOING:
                 return status
 
+        # 空セルのリストを作成（高速化のため）
+        empty_cells = []
+        for y in range(board.height):
+            for x in range(board.width):
+                if board.is_empty(x, y):
+                    empty_cells.append(Position(x, y))
+
         # ランダムに終局まで打つ
-        max_moves = board.width * board.height - board.move_count
+        max_moves = len(empty_cells)
 
         for _ in range(max_moves):
-            valid_moves = rule.get_valid_moves(board, stone)
-
-            if not valid_moves:
+            if not empty_cells:
                 return GameStatus.DRAW
 
-            move = self._rng.choice(valid_moves)
+            # ランダムに空セルを選択
+            idx = self._rng.randint(0, len(empty_cells) - 1)
+            move = empty_cells[idx]
+            empty_cells[idx] = empty_cells[-1]
+            empty_cells.pop()
+
+            # 合法手チェック（重力ルールなどの対応）
+            if not rule.is_valid_move(board, move.x, move.y, stone):
+                continue
+
             board.set_stone(move.x, move.y, stone)
 
             status = rule.check_winner(board, move.x, move.y, stone)
@@ -697,17 +1074,20 @@ class MCTSAI(AIStrategy):
         while node is not None:
             node.visits += 1
 
-            # 勝敗判定（ノードの視点で評価）
+            # 勝敗判定
+            # UCB1で子ノードを選択する際、親から見て良い手を選びたい
+            # node.stone = 次に打つプレイヤー
+            # node.stone.opponent() = このノードに至る手を打ったプレイヤー
+            # なので、そのプレイヤーが勝ったらwinsをカウント
             if result == GameStatus.DRAW:
                 node.wins += 0.5
             elif result == GameStatus.BLACK_WIN:
-                # このノードで「次に打つ石」がBLACKなら、
-                # 直前に打ったのはWHITEで、BLACKが勝ったので直前の手は悪手
-                # つまり、node.stone == BLACK なら相手（WHITE）が打った後にBLACKが勝った = このノードでは勝ち
-                if node.stone == Stone.BLACK:
+                # BLACKが勝った場合、BLACKが打った手（=WHITEの番のノード）にポイント
+                if node.stone == Stone.WHITE:
                     node.wins += 1
             elif result == GameStatus.WHITE_WIN:
-                if node.stone == Stone.WHITE:
+                # WHITEが勝った場合、WHITEが打った手（=BLACKの番のノード）にポイント
+                if node.stone == Stone.BLACK:
                     node.wins += 1
 
             node = node.parent  # type: ignore
@@ -745,7 +1125,8 @@ class AIStrategyFactory:
         elif name_lower == "minimax":
             return MinimaxAI(
                 depth=kwargs.get("depth", 3),
-                time_limit=kwargs.get("time_limit")
+                time_limit=kwargs.get("time_limit"),
+                use_iterative_deepening=kwargs.get("use_iterative_deepening", False)
             )
 
         elif name_lower == "mcts":
@@ -761,4 +1142,4 @@ class AIStrategyFactory:
     @staticmethod
     def list_available() -> list[str]:
         """利用可能な戦略名一覧"""
-        return ["random", "minimax", "mcts"]
+        return ["random", "minimax", "mcts", "vcf"]

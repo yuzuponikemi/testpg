@@ -19,6 +19,13 @@ class GameConfig:
     white_player_type: str
     ai_depth: int = 3
     ai_simulations: int = 500
+    use_iterative_deepening: bool = False
+    use_vct: bool = False
+    show_thinking: bool = True
+    # 棋譜記録設定
+    record_games: bool = False
+    record_dir: str = "./game_logs"
+    record_format: str = "json"  # "json" or "jsonl"
 
 
 class SettingsView(ft.View):
@@ -58,6 +65,7 @@ class SettingsView(ft.View):
             ("random", "AI: Random (Easy)"),
             ("minimax", "AI: Minimax (Medium)"),
             ("mcts", "AI: MCTS (Hard)"),
+            ("vcf", "AI: VCF Threat (Hard)"),
         ]
 
         # UI要素
@@ -66,6 +74,9 @@ class SettingsView(ft.View):
         self._white_dropdown: ft.Dropdown = None  # type: ignore
         self._ai_depth_slider: ft.Slider = None  # type: ignore
         self._ai_depth_text: ft.Text = None  # type: ignore
+        self._iterative_deepening_switch: ft.Switch = None  # type: ignore
+        self._vct_switch: ft.Switch = None  # type: ignore
+        self._show_thinking_switch: ft.Switch = None  # type: ignore
 
         self._build_ui()
 
@@ -138,12 +149,34 @@ class SettingsView(ft.View):
             width=350,
         )
 
+        # 反復深化スイッチ
+        self._iterative_deepening_switch = ft.Switch(
+            label="Iterative Deepening (Minimax)",
+            value=False,
+        )
+
+        # VCTスイッチ
+        self._vct_switch = ft.Switch(
+            label="Enable VCT (VCF AI only)",
+            value=False,
+        )
+
+        # 思考表示スイッチ
+        self._show_thinking_switch = ft.Switch(
+            label="Show AI Thinking",
+            value=True,
+        )
+
         ai_settings = ft.Column(
             controls=[
                 ft.Divider(),
                 ft.Text("AI Settings", size=16, weight=ft.FontWeight.BOLD),
                 self._ai_depth_text,
                 self._ai_depth_slider,
+                ft.Container(height=5),
+                self._iterative_deepening_switch,
+                self._vct_switch,
+                self._show_thinking_switch,
             ],
             spacing=10,
         )
@@ -207,6 +240,9 @@ class SettingsView(ft.View):
             white_player_type=self._white_dropdown.value or "minimax",
             ai_depth=int(self._ai_depth_slider.value),
             ai_simulations=500,
+            use_iterative_deepening=self._iterative_deepening_switch.value,
+            use_vct=self._vct_switch.value,
+            show_thinking=self._show_thinking_switch.value,
         )
 
         self._on_start_game(config)

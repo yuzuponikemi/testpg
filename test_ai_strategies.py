@@ -10,7 +10,7 @@ import time
 from game_core import Board, Stone, Position, GameStatus, StandardGomokuRule
 from ai_strategies import (
     AIStrategy, RandomAI, MinimaxAI, MCTSAI,
-    AIStrategyFactory, EvaluationWeights
+    AIStrategyFactory, EvaluationWeights, ThinkingProgress
 )
 
 
@@ -172,6 +172,67 @@ class TestMinimaxAI:
         assert MinimaxAI(depth=4).difficulty == "Medium"
         assert MinimaxAI(depth=5).difficulty == "Hard"
 
+    def test_iterative_deepening_enabled(self):
+        """反復深化が有効な場合"""
+        ai = MinimaxAI(depth=3, use_iterative_deepening=True)
+        assert "ID" in ai.name
+
+    def test_iterative_deepening_finds_winning_move(self):
+        """反復深化でも1手詰めを逃さない"""
+        ai = MinimaxAI(depth=3, use_iterative_deepening=True)
+        rule = StandardGomokuRule()
+        board = rule.create_board()
+
+        # 黒の4連を作る
+        for i in range(4):
+            board.set_stone(i, 0, Stone.BLACK)
+            board.set_stone(i, 1, Stone.WHITE)
+
+        move = ai.select_move(board, rule, Stone.BLACK)
+        assert move == Position(4, 0)
+
+    def test_iterative_deepening_with_time_limit(self):
+        """反復深化 + 時間制限"""
+        ai = MinimaxAI(depth=10, time_limit=0.3, use_iterative_deepening=True)
+        rule = StandardGomokuRule()
+        board = rule.create_board()
+
+        start = time.time()
+        move = ai.select_move(board, rule, Stone.BLACK)
+        elapsed = time.time() - start
+
+        # 時間制限内に完了
+        assert elapsed < 0.6
+        # 有効な手を返す
+        assert rule.is_valid_move(board, move.x, move.y, Stone.BLACK)
+
+    def test_supports_progress(self):
+        """進捗通知をサポート"""
+        ai = MinimaxAI(depth=3)
+        assert ai.supports_progress is True
+
+    def test_progress_callback(self):
+        """進捗コールバックが呼ばれる"""
+        progress_reports = []
+
+        def callback(progress: ThinkingProgress):
+            progress_reports.append(progress)
+
+        ai = MinimaxAI(depth=3, use_iterative_deepening=True)
+        ai.set_progress_callback(callback)
+
+        rule = StandardGomokuRule()
+        board = rule.create_board()
+        board.set_stone(7, 7, Stone.BLACK)
+        board.set_stone(7, 8, Stone.WHITE)
+
+        ai.select_move(board, rule, Stone.BLACK)
+
+        # 進捗通知が呼ばれた
+        assert len(progress_reports) > 0
+        # ai_typeが正しい
+        assert all(p.ai_type == "minimax" for p in progress_reports)
+
 
 class TestMCTSAI:
     """MCTSAIのテスト"""
@@ -247,6 +308,35 @@ class TestMCTSAI:
     def test_difficulty_is_hard(self):
         """難易度はHard"""
         assert MCTSAI().difficulty == "Hard"
+
+    def test_supports_progress(self):
+        """進捗通知をサポート"""
+        ai = MCTSAI()
+        assert ai.supports_progress is True
+
+    def test_progress_callback(self):
+        """進捗コールバックが呼ばれる"""
+        progress_reports = []
+
+        def callback(progress: ThinkingProgress):
+            progress_reports.append(progress)
+
+        ai = MCTSAI(simulations=200)
+        ai.set_progress_callback(callback)
+
+        rule = StandardGomokuRule()
+        board = rule.create_board()
+        board.set_stone(7, 7, Stone.BLACK)
+        board.set_stone(7, 8, Stone.WHITE)
+
+        ai.select_move(board, rule, Stone.BLACK)
+
+        # 進捗通知が呼ばれた
+        assert len(progress_reports) > 0
+        # ai_typeが正しい
+        assert all(p.ai_type == "mcts" for p in progress_reports)
+        # シミュレーション数が増加している
+        assert progress_reports[-1].simulations_completed > 0
 
 
 class TestAIStrategyFactory:

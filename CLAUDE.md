@@ -305,6 +305,177 @@ self._game_task = self._page.run_task(self._run_game_loop)
 
 ---
 
+## AI改良（Milestone 5）実装済み
+
+### 新機能一覧
+
+| 機能 | 説明 |
+|------|------|
+| 反復深化 | MinimaxAIで深さ1から順に探索、時間制限対応 |
+| VCF探索 | 四の連続で詰みを探索 |
+| VCT探索 | 三も含めた詰み探索（VCFより強力） |
+| 思考進捗通知 | AI思考過程をコールバックで通知 |
+| ThinkingPanel | 思考過程のUI可視化 |
+
+### 思考進捗通知
+
+```python
+from ai_strategies import ThinkingProgress, MinimaxAI
+
+def on_progress(progress: ThinkingProgress):
+    print(f"Depth: {progress.current_depth}, Nodes: {progress.nodes_visited}")
+
+ai = MinimaxAI(depth=4, use_iterative_deepening=True)
+ai.set_progress_callback(on_progress)
+move = ai.select_move(board, rule, stone)
+```
+
+**ThinkingProgress フィールド:**
+- `ai_type`: "minimax", "mcts", "vcf"
+- `elapsed_time`: 経過時間（秒）
+- Minimax用: `current_depth`, `max_depth`, `nodes_visited`, `current_best_move`, `current_best_score`
+- MCTS用: `simulations_completed`, `total_simulations`, `top_moves`
+- VCF用: `vcf_depth`, `is_forced_win`, `win_sequence`
+
+### 反復深化（Iterative Deepening）
+
+```python
+# 反復深化有効
+ai = MinimaxAI(depth=5, use_iterative_deepening=True, time_limit=3.0)
+```
+
+- 深さ1から順に探索
+- 各深度完了時に最善手を更新
+- 時間切れでも最後に完了した深度の結果を使用
+
+### VCF/VCT探索
+
+```python
+from threat_search import VCFSearch, VCTSearch, VCFBasedAI
+
+# VCF探索（四の連続）
+vcf = VCFSearch(max_depth=20, time_limit=1.0)
+result = vcf.search(board, rule, stone)
+if result.is_winning:
+    print(f"Win sequence: {result.win_sequence}")
+
+# VCF AI（フォールバック付き）
+ai = VCFBasedAI(use_vct=True, fallback=RandomAI())
+move = ai.select_move(board, rule, stone)
+```
+
+**VCFResult:**
+- `is_winning`: 詰みが見つかったか
+- `win_sequence`: 詰み手順
+- `depth_searched`: 探索深さ
+- `nodes_visited`: 訪問ノード数
+
+### ThinkingPanel（UI）
+
+```python
+from ui.thinking_panel import ThinkingPanel
+
+panel = ThinkingPanel(show_detailed_log=True)
+panel.set_page(page)
+panel.update_progress(progress)  # スレッドセーフ
+```
+
+- 進捗バー（深度/シミュレーション）
+- 統計情報（ノード数、時間、評価値）
+- 最善手表示
+- 詳細ログ（オプション）
+
+### GameConfig拡張
+
+```python
+config = GameConfig(
+    rule_id="StandardGomokuRule",
+    black_player_type="minimax",
+    white_player_type="vcf",
+    ai_depth=4,
+    ai_simulations=1000,
+    use_iterative_deepening=True,  # 新規
+    use_vct=False,                  # 新規
+    show_thinking=True,             # 新規
+    record_games=True,              # 棋譜記録
+    record_dir="./game_logs",       # 保存先
+    record_format="json",           # "json" or "jsonl"
+)
+```
+
+---
+
+## 棋譜記録（Game Recording）
+
+### 概要
+
+対局記録をJSON/JSONL形式で保存し、機械学習やGPTの訓練データとして活用できます。
+
+### 使用方法
+
+```python
+from game_record import GameRecorder, load_game_record, load_game_records_jsonl
+
+# 記録開始
+recorder = GameRecorder(output_dir="./game_logs", format="json", enabled=True)
+recorder.start_game(rule, black_player, white_player, config)
+
+# 各手の記録
+recorder.record_move(position, stone, thinking_time=1.2, eval_score=0.5)
+
+# 対局終了
+recorder.end_game(result)
+filepath = recorder.save()
+
+# 棋譜読み込み
+record = load_game_record("game_20260129_120000.json")
+records = load_game_records_jsonl("games_20260129.jsonl")  # JSONL形式
+```
+
+### CLI オプション
+
+```bash
+# 棋譜記録を有効にしてAI対戦
+python main.py -b minimax -w mcts --record
+
+# 保存先とフォーマットを指定
+python main.py -b vcf -w vcf --record --record-dir ./training_data --record-format jsonl
+```
+
+### データ構造
+
+**GameRecord:**
+```json
+{
+  "game_id": "20260129_120000_000000",
+  "timestamp": "2026-01-29T12:00:00",
+  "rule_id": "StandardGomokuRule",
+  "board_width": 15,
+  "board_height": 15,
+  "win_condition": 5,
+  "black_player": {"stone": "BLACK", "player_type": "minimax", "name": "Minimax AI", "ai_depth": 3},
+  "white_player": {"stone": "WHITE", "player_type": "mcts", "name": "MCTS AI", "ai_simulations": 1000},
+  "result": "BLACK_WIN",
+  "total_moves": 45,
+  "duration": 120.5,
+  "moves": [
+    {"move_number": 1, "x": 7, "y": 7, "stone": "BLACK", "timestamp": 0.5, "thinking_time": 0.3},
+    {"move_number": 2, "x": 8, "y": 8, "stone": "WHITE", "timestamp": 1.2, "eval_score": 0.1}
+  ],
+  "version": "1.0",
+  "platform": "Variant Go Platform"
+}
+```
+
+### フォーマット比較
+
+| フォーマット | 用途 | 特徴 |
+|-------------|------|------|
+| JSON | 個別分析、デバッグ | 1ファイル1対局、読みやすい |
+| JSONL | 大量データ、訓練 | 1行1対局、追記可能、ストリーム処理向き |
+
+---
+
 ## テスト方針
 
 ### 必須テストケース
@@ -347,19 +518,29 @@ mock_strategy.select_move.return_value = Position(7, 7)
 ```
 testpg/
 ├── main.py                # GUIエントリーポイント（Milestone 4）
-├── ui/                    # UIコンポーネント（Milestone 4）
+├── ui/                    # UIコンポーネント（Milestone 4-5）
 │   ├── __init__.py
 │   ├── board_component.py # 盤面表示
 │   ├── settings_view.py   # 設定画面
-│   └── game_view.py       # ゲーム画面
+│   ├── game_view.py       # ゲーム画面
+│   └── thinking_panel.py  # AI思考可視化パネル（Milestone 5）
 ├── game_core.py           # コアロジック（Milestone 1 + 3）
 │                          #   - Board, GameRule, StandardGomokuRule
 │                          #   - GravityGomokuRule, RuleRegistry
 │                          #   - GameEngine
-├── ai_strategies.py       # AI戦略（Milestone 2）
+├── ai_strategies.py       # AI戦略（Milestone 2 + 5）
+│                          #   - ThinkingProgress, 反復深化
+├── threat_search.py       # VCF/VCT探索（Milestone 5）
+│                          #   - ThreatDetector, VCFSearch, VCTSearch
+│                          #   - VCFBasedAI
+├── game_record.py         # 棋譜記録
+│                          #   - GameRecord, MoveRecord, PlayerRecord
+│                          #   - GameRecorder
 ├── players.py             # プレイヤー・セッション管理（Milestone 2）
 ├── test_game_core.py      # コアロジックテスト（82件）
-├── test_ai_strategies.py  # AI戦略テスト（27件）
+├── test_ai_strategies.py  # AI戦略テスト（34件）
+├── test_threat_search.py  # VCF/VCTテスト（21件）
+├── test_game_record.py    # 棋譜記録テスト（16件）
 ├── test_players.py        # プレイヤーテスト（28件）
 ├── test_integration.py    # 統合テスト（12件）
 ├── conftest.py            # pytest設定
@@ -368,7 +549,7 @@ testpg/
 └── CLAUDE.md              # このファイル
 ```
 
-**テスト総数:** 149件
+**テスト総数:** 193件
 
 ---
 
@@ -380,6 +561,13 @@ testpg/
 | 両開き | 連続石の両端が空いている状態（防御困難） |
 | プレイアウト | MCTSでの終局までのランダム対局 |
 | UCB1 | MCTSのノード選択に使うアルゴリズム |
+| VCF | Victory by Continuous Fours - 四の連続による詰み |
+| VCT | Victory by Continuous Threats - 脅威の連続による詰み |
+| 反復深化 | 深さ1から順に探索する手法、時間管理に有効 |
+| 四 | あと1手で5連になる形 |
+| 活三 | 両端が空いた3連（次に四を2箇所作れる） |
+| 棋譜 | 対局の手順記録、ML/GPT訓練データに利用可能 |
+| JSONL | JSON Lines形式、1行1レコードで大量データ向き |
 
 ---
 
@@ -391,3 +579,5 @@ testpg/
 | 2026-01-28 | Milestone 2完了（AI基盤: RandomAI, MinimaxAI, MCTSAI, GameSession） |
 | 2026-01-28 | Milestone 3完了（ルールエンジン: RuleRegistry, GravityGomokuRule, STONE_MOVEDイベント） |
 | 2026-01-28 | Milestone 4完了（Flet GUI: BoardComponent, SettingsView, GameView） |
+| 2026-01-29 | Milestone 5完了（AI改良: 反復深化, VCF/VCT, ThinkingProgress, ThinkingPanel） |
+| 2026-01-29 | 棋譜記録機能追加（GameRecord, GameRecorder, JSON/JSONL形式） |

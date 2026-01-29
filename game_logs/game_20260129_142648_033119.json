@@ -1,0 +1,141 @@
+{
+  "game_id": "20260129_142648_033119",
+  "timestamp": "2026-01-29T14:26:48.033119",
+  "rule_id": "StandardGomokuRule",
+  "board_width": 15,
+  "board_height": 15,
+  "win_condition": 5,
+  "black_player": {
+    "stone": "BLACK",
+    "player_type": "minimax",
+    "name": "Black (Minimax (depth=3))",
+    "ai_depth": 3,
+    "ai_simulations": null,
+    "use_iterative_deepening": false,
+    "use_vct": false
+  },
+  "white_player": {
+    "stone": "WHITE",
+    "player_type": "mcts",
+    "name": "White (MCTS (sims=500))",
+    "ai_depth": null,
+    "ai_simulations": 500,
+    "use_iterative_deepening": false,
+    "use_vct": false
+  },
+  "result": "BLACK_WIN",
+  "total_moves": 9,
+  "duration": 103.39606976509094,
+  "moves": [
+    {
+      "move_number": 1,
+      "x": 7,
+      "y": 7,
+      "stone": "BLACK",
+      "timestamp": 0.0,
+      "thinking_time": 0.0,
+      "eval_score": null,
+      "depth": null,
+      "nodes": null,
+      "pv": null
+    },
+    {
+      "move_number": 2,
+      "x": 7,
+      "y": 3,
+      "stone": "WHITE",
+      "timestamp": 14.793881893157959,
+      "thinking_time": 14.793881893157959,
+      "eval_score": null,
+      "depth": null,
+      "nodes": null,
+      "pv": null
+    },
+    {
+      "move_number": 3,
+      "x": 6,
+      "y": 6,
+      "stone": "BLACK",
+      "timestamp": 28.71763324737549,
+      "thinking_time": 13.92375135421753,
+      "eval_score": null,
+      "depth": null,
+      "nodes": null,
+      "pv": null
+    },
+    {
+      "move_number": 4,
+      "x": 6,
+      "y": 12,
+      "stone": "WHITE",
+      "timestamp": 43.75074124336243,
+      "thinking_time": 15.033107995986938,
+      "eval_score": null,
+      "depth": null,
+      "nodes": null,
+      "pv": null
+    },
+    {
+      "move_number": 5,
+      "x": 5,
+      "y": 5,
+      "stone": "BLACK",
+      "timestamp": 57.82394528388977,
+      "thinking_time": 14.073204040527344,
+      "eval_score": null,
+      "depth": null,
+      "nodes": null,
+      "pv": null
+    },
+    {
+      "move_number": 6,
+      "x": 0,
+      "y": 4,
+      "stone": "WHITE",
+      "timestamp": 71.12097954750061,
+      "thinking_time": 13.29703426361084,
+      "eval_score": null,
+      "depth": null,
+      "nodes": null,
+      "pv": null
+    },
+    {
+      "move_number": 7,
+      "x": 4,
+      "y": 4,
+      "stone": "BLACK",
+      "timestamp": 89.93660378456116,
+      "thinking_time": 18.815624237060547,
+      "eval_score": null,
+      "depth": null,
+      "nodes": null,
+      "pv": null
+    },
+    {
+      "move_number": 8,
+      "x": 13,
+      "y": 0,
+      "stone": "WHITE",
+      "timestamp": 101.01287508010864,
+      "thinking_time": 11.076271295547485,
+      "eval_score": null,
+      "depth": null,
+      "nodes": null,
+      "pv": null
+    },
+    {
+      "move_number": 9,
+      "x": 3,
+      "y": 3,
+      "stone": "BLACK",
+      "timestamp": 103.39606976509094,
+      "thinking_time": 2.3831946849823,
+      "eval_score": null,
+      "depth": null,
+      "nodes": null,
+      "pv": null
+    }
+  ],
+  "version": "1.0",
+  "platform": "Variant Go Platform"
+}

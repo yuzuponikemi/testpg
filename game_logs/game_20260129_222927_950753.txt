@@ -1,0 +1,55 @@
+# Variant Go: StandardGomokuRule 15x15
+# Black: Black (VCF+VCT) vs White: White (Random)
+# Result: BLACK_WIN (51 moves)
+
+1. l4
+2. m4
+3. i10
+4. h13
+5. c10
+6. o3
+7. b10
+8. c13
+9. n3
+10. j1
+11. j8
+12. a11
+13. d13
+14. f7
+15. l1
+16. o11
+17. m3
+18. a1
+19. n6
+20. a4
+21. g13
+22. k7
+23. h4
+24. o9
+25. d7
+26. b6
+27. l3
+28. i4
+29. l11
+30. f1
+31. m8
+32. f8
+33. e6
+34. m2
+35. i3
+36. o4
+37. j3
+38. b5
+39. h3
+40. f14
+41. g3
+42. j2
+43. e3
+44. d12
+45. d3
+46. g4
+47. c3
+48. e5
+49. b3
+50. n4
+51. a3

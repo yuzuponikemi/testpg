@@ -1,0 +1,13 @@
+# Variant Go: StandardGomokuRule 15x15
+# Black: Black (Minimax (depth=3)) vs White: White (Random)
+# Result: BLACK_WIN (9 moves)
+
+1. h8
+2. i4
+3. g7
+4. d15
+5. f6
+6. e4
+7. e5
+8. k10
+9. d4
