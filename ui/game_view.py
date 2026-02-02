@@ -83,11 +83,44 @@ class GameView(ft.View):
             # VCF AIの場合
             if player_type == "vcf":
                 from threat_search import VCFBasedAI
-                from ai_strategies import RandomAI
+                from ai_strategies import MinimaxAI
+                # フォールバックにMinimaxAIを使用（詰みがない時の戦略的プレイ）
+                fallback_ai = MinimaxAI(
+                    depth=self._config.ai_depth,
+                    use_iterative_deepening=getattr(
+                        self._config, 'use_iterative_deepening', False
+                    ),
+                )
                 strategy = VCFBasedAI(
                     use_vct=getattr(self._config, 'use_vct', False),
-                    fallback=RandomAI(),
+                    fallback=fallback_ai,
                 )
+            # Neural AIの場合
+            elif player_type == "neural":
+                from neural_player import NeuralPlayerFactory
+                model_path = getattr(
+                    self._config, 'neural_model_path',
+                    'checkpoints/gomoku_gpt_best.pth'
+                )
+                temperature = getattr(self._config, 'neural_temperature', 0.5)
+
+                # モデルが存在するかチェック
+                if not NeuralPlayerFactory.is_model_available(model_path):
+                    # モデルがなければMinimaxにフォールバック
+                    print(f"[Warning] Neural model not found: {model_path}")
+                    print("[Warning] Falling back to MinimaxAI")
+                    strategy = AIStrategyFactory.create(
+                        "minimax",
+                        depth=self._config.ai_depth,
+                        use_iterative_deepening=getattr(
+                            self._config, 'use_iterative_deepening', False
+                        ),
+                    )
+                else:
+                    strategy = NeuralPlayerFactory.create(
+                        model_path=model_path,
+                        temperature=temperature,
+                    )
             else:
                 strategy = AIStrategyFactory.create(
                     player_type,

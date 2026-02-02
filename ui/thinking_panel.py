@@ -160,6 +160,7 @@ class ThinkingPanel(ft.Container):
             "minimax": "Minimax Search",
             "mcts": "Monte Carlo Tree Search",
             "vcf": "VCF Threat Search",
+            "neural": "Neural Network",
         }
         self._ai_type_text.value = ai_type_names.get(
             progress.ai_type,
@@ -259,6 +260,28 @@ class ThinkingPanel(ft.Container):
                     self._add_log_entry("VCF found!", seq_str)
             else:
                 self._progress_text.value = f"Searching... Depth: {progress.vcf_depth} | Time: {elapsed_str}"
+                self._stats_text.value = ""
+                self._best_move_text.value = ""
+
+        elif progress.ai_type == "neural":
+            # Neural: Transformer推論
+            self._progress_bar.value = 1.0  # 即座に完了
+            self._progress_text.value = f"Time: {elapsed_str}"
+
+            # 上位手を表示
+            if progress.top_moves:
+                top_move = progress.top_moves[0]
+                pos, prob = top_move
+                self._stats_text.value = f"Confidence: {prob*100:.1f}%"
+                self._best_move_text.value = f"Best: ({pos.x}, {pos.y})"
+
+                # ログ追加
+                moves_str = ", ".join(
+                    f"({p.x},{p.y}):{r*100:.0f}%"
+                    for p, r in progress.top_moves[:3]
+                )
+                self._add_log_entry("Neural prediction", f"Top: {moves_str}")
+            else:
                 self._stats_text.value = ""
                 self._best_move_text.value = ""
 

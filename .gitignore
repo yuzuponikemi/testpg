@@ -50,3 +50,10 @@ nul
 
 # Logs
 *.log
+
+# Model checkpoints
+checkpoints/
+
+# Training data (generated)
+training_data.jsonl
+training_data_combined.jsonl

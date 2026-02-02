@@ -22,6 +22,9 @@ class GameConfig:
     use_iterative_deepening: bool = False
     use_vct: bool = False
     show_thinking: bool = True
+    # NeuralAI設定
+    neural_temperature: float = 0.5
+    neural_model_path: str = "checkpoints/gomoku_gpt_best.pth"
     # 棋譜記録設定
     record_games: bool = False
     record_dir: str = "./game_logs"
@@ -66,6 +69,7 @@ class SettingsView(ft.View):
             ("minimax", "AI: Minimax (Medium)"),
             ("mcts", "AI: MCTS (Hard)"),
             ("vcf", "AI: VCF Threat (Hard)"),
+            ("neural", "AI: Neural (Transformer)"),
         ]
 
         # UI要素
@@ -77,6 +81,8 @@ class SettingsView(ft.View):
         self._iterative_deepening_switch: ft.Switch = None  # type: ignore
         self._vct_switch: ft.Switch = None  # type: ignore
         self._show_thinking_switch: ft.Switch = None  # type: ignore
+        self._neural_temp_slider: ft.Slider = None  # type: ignore
+        self._neural_temp_text: ft.Text = None  # type: ignore
 
         self._build_ui()
 
@@ -167,6 +173,18 @@ class SettingsView(ft.View):
             value=True,
         )
 
+        # NeuralAI温度設定
+        self._neural_temp_text = ft.Text("Neural Temperature: 0.5", size=14)
+        self._neural_temp_slider = ft.Slider(
+            min=0,
+            max=1,
+            divisions=10,
+            value=0.5,
+            label="{value}",
+            on_change=self._on_temp_change,
+            width=350,
+        )
+
         ai_settings = ft.Column(
             controls=[
                 ft.Divider(),
@@ -177,6 +195,10 @@ class SettingsView(ft.View):
                 self._iterative_deepening_switch,
                 self._vct_switch,
                 self._show_thinking_switch,
+                ft.Container(height=10),
+                ft.Text("Neural AI Settings", size=14, color=ft.Colors.GREY_600),
+                self._neural_temp_text,
+                self._neural_temp_slider,
             ],
             spacing=10,
         )
@@ -232,6 +254,12 @@ class SettingsView(ft.View):
         self._ai_depth_text.value = f"AI Depth: {depth}"
         self._page.update()
 
+    def _on_temp_change(self, e: ft.ControlEvent) -> None:
+        """Neural温度スライダー変更ハンドラ"""
+        temp = e.control.value
+        self._neural_temp_text.value = f"Neural Temperature: {temp:.1f}"
+        self._page.update()
+
     def _on_start_click(self, e: ft.ControlEvent) -> None:
         """ゲーム開始ボタンクリックハンドラ"""
         config = GameConfig(
@@ -243,6 +271,7 @@ class SettingsView(ft.View):
             use_iterative_deepening=self._iterative_deepening_switch.value,
             use_vct=self._vct_switch.value,
             show_thinking=self._show_thinking_switch.value,
+            neural_temperature=self._neural_temp_slider.value,
         )
 
         self._on_start_game(config)
